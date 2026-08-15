@@ -1,0 +1,20 @@
+# Build files
+*.o
+*.out
+
+# Executables
+vehicle_ecu
+dashboard_ecu
+logger_ecu
+can_fd_demo
+
+# Runtime logs
+logs/*.csv
+logs/*.txt
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
