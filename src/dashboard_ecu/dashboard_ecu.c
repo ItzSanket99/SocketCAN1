@@ -2,18 +2,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-
 #include <net/if.h>
 
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include "../../include/can_messages.h"
+
+
 int main() {
 
-    /* 1. Create a CAN raw socket */
     int socket_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
 
     if (socket_fd < 0) {
@@ -21,67 +21,115 @@ int main() {
         return 1;
     }
 
-    /* 2. Get the interface index of vcan0 */
     struct ifreq ifr;
 
     strcpy(ifr.ifr_name, "vcan0");
 
     if (ioctl(socket_fd, SIOCGIFINDEX, &ifr) < 0) {
-        perror("Failed to get interface index");
+        perror("Interface lookup failed");
         close(socket_fd);
         return 1;
     }
 
-    /* 3. Configure CAN address */
     struct sockaddr_can addr;
+
+    memset(&addr, 0, sizeof(addr));
 
     addr.can_family = AF_CAN;
     addr.can_ifindex = ifr.ifr_ifindex;
 
-    /* 4. Bind socket to vcan0 */
     if (bind(socket_fd,
              (struct sockaddr *)&addr,
              sizeof(addr)) < 0) {
 
-        perror("Socket bind failed");
+        perror("Bind failed");
         close(socket_fd);
         return 1;
     }
 
-    printf("Dashboard ECU started...\n");
-    printf("Waiting for CAN messages...\n\n");
 
-    /* 5. Continuously receive CAN frames */
+    int speed = 0;
+    int rpm = 0;
+    int temperature = 0;
+
+    printf("\n");
+    printf("--------------------------------\n");
+    printf("        Vehicle Dashboard\n");
+    printf("--------------------------------\n");
+
+
     while (1) {
 
         struct can_frame frame;
 
-        int bytes_received = read(socket_fd,
-                                  &frame,
-                                  sizeof(frame));
+        int bytes_received =
+            read(socket_fd, &frame, sizeof(frame));
 
         if (bytes_received < 0) {
-            perror("CAN frame reception failed");
+            perror("CAN reception failed");
             break;
         }
 
-        /* 6. Display received frame */
-        printf("CAN Message Received\n");
-        printf("--------------------\n");
 
-        printf("CAN ID : 0x%03X\n", frame.can_id);
-        printf("DLC    : %d\n", frame.can_dlc);
+        switch (frame.can_id) {
 
-        printf("Data   : ");
+            case CAN_ID_SPEED:
 
-        for (int i = 0; i < frame.can_dlc; i++) {
-            printf("%02X ", frame.data[i]);
+                if (frame.can_dlc >= 2) {
+
+                    int encoded_speed =
+                        ((frame.data[0] << 8) |
+                         frame.data[1]);
+
+                    speed = encoded_speed / 10;
+                }
+
+                break;
+
+
+            case CAN_ID_RPM:
+
+                if (frame.can_dlc >= 2) {
+
+                    rpm =
+                        ((frame.data[0] << 8) |
+                         frame.data[1]);
+                }
+
+                break;
+
+
+            case CAN_ID_TEMPERATURE:
+
+                if (frame.can_dlc >= 1) {
+
+                    temperature = frame.data[0];
+                }
+
+                break;
+
+
+            default:
+
+                printf("Unknown CAN ID: 0x%03X\n",
+                       frame.can_id);
+
+                continue;
         }
 
-        printf("\n\n");
+
+        printf("\033[4A");
+
+        printf("--------------------------------\n");
+        printf("        Vehicle Dashboard\n");
+        printf("--------------------------------\n");
+        printf("Speed       : %d km/h\n", speed);
+        printf("Engine RPM  : %d rpm\n", rpm);
+        printf("Temperature : %d C\n", temperature);
+        printf("--------------------------------\n");
     }
 
-    /* 7. Close socket */
+
     close(socket_fd);
 
     return 0;

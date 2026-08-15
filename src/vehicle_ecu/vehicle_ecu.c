@@ -2,18 +2,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-
 #include <net/if.h>
 
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include "../../include/can_messages.h"
+
+
 int main() {
 
-    /* 1. Create a CAN raw socket */
+    /* Create CAN socket */
     int socket_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
 
     if (socket_fd < 0) {
@@ -21,7 +24,7 @@ int main() {
         return 1;
     }
 
-    /* 2. Get the interface index of vcan0 */
+    /* Get vcan0 interface index */
     struct ifreq ifr;
 
     strcpy(ifr.ifr_name, "vcan0");
@@ -32,13 +35,15 @@ int main() {
         return 1;
     }
 
-    /* 3. Specify the CAN interface */
+    /* Configure CAN address */
     struct sockaddr_can addr;
+
+    memset(&addr, 0, sizeof(addr));
 
     addr.can_family = AF_CAN;
     addr.can_ifindex = ifr.ifr_ifindex;
 
-    /* 4. Bind the socket to vcan0 */
+    /* Bind socket to vcan0 */
     if (bind(socket_fd,
              (struct sockaddr *)&addr,
              sizeof(addr)) < 0) {
@@ -48,42 +53,113 @@ int main() {
         return 1;
     }
 
-    /* 5. Create a CAN frame */
-    struct can_frame frame;
+    printf("=====================================\n");
+    printf("        Vehicle ECU Started\n");
+    printf("=====================================\n");
 
-    memset(&frame, 0, sizeof(frame));
+    srand(time(NULL));
 
-    frame.can_id = 0x123;
-    frame.can_dlc = 4;
+    int speed = 60;
+    int rpm = 2500;
+    int temperature = 85;
 
-    frame.data[0] = 0x11;
-    frame.data[1] = 0x22;
-    frame.data[2] = 0x33;
-    frame.data[3] = 0x44;
+    while (1) {
 
-    /* 6. Transmit the CAN frame */
-    int bytes_sent = write(socket_fd,
-                           &frame,
-                           sizeof(frame));
+        /*
+         * Simulate realistic vehicle behavior.
+         *
+         * Values change gradually rather than randomly
+         * jumping between minimum and maximum.
+         */
 
-    if (bytes_sent != sizeof(frame)) {
-        perror("CAN frame transmission failed");
-        close(socket_fd);
-        return 1;
+        int speed_change = (rand() % 7) - 3;
+        speed += speed_change;
+
+        if (speed < SPEED_MIN)
+            speed = SPEED_MIN;
+
+        if (speed > SPEED_MAX)
+            speed = SPEED_MAX;
+
+
+        /* RPM roughly follows vehicle speed */
+        rpm = 1000 + (speed * 30) + ((rand() % 201) - 100);
+
+        if (rpm < RPM_MIN)
+            rpm = RPM_MIN;
+
+        if (rpm > RPM_MAX)
+            rpm = RPM_MAX;
+
+
+        /* Slowly vary temperature */
+        int temp_change = (rand() % 3) - 1;
+        temperature += temp_change;
+
+        if (temperature < TEMP_MIN)
+            temperature = TEMP_MIN;
+
+        if (temperature > TEMP_MAX)
+            temperature = TEMP_MAX;
+
+
+        struct can_frame frame;
+
+        memset(&frame, 0, sizeof(frame));
+
+
+        /* ---------------- SPEED ---------------- */
+
+        frame.can_id = CAN_ID_SPEED;
+        frame.can_dlc = 2;
+
+        int speed_encoded = speed * 10;
+
+        frame.data[0] = (speed_encoded >> 8) & 0xFF;
+        frame.data[1] = speed_encoded & 0xFF;
+
+        if (write(socket_fd, &frame, sizeof(frame)) != sizeof(frame)) {
+            perror("Speed transmission failed");
+        }
+
+
+        /* ---------------- RPM ---------------- */
+
+        memset(&frame, 0, sizeof(frame));
+
+        frame.can_id = CAN_ID_RPM;
+        frame.can_dlc = 2;
+
+        frame.data[0] = (rpm >> 8) & 0xFF;
+        frame.data[1] = rpm & 0xFF;
+
+        if (write(socket_fd, &frame, sizeof(frame)) != sizeof(frame)) {
+            perror("RPM transmission failed");
+        }
+
+
+        /* ---------------- TEMPERATURE ---------------- */
+
+        memset(&frame, 0, sizeof(frame));
+
+        frame.can_id = CAN_ID_TEMPERATURE;
+        frame.can_dlc = 1;
+
+        frame.data[0] = temperature;
+
+        if (write(socket_fd, &frame, sizeof(frame)) != sizeof(frame)) {
+            perror("Temperature transmission failed");
+        }
+
+
+        printf("Speed: %d km/h | RPM: %d | Temperature: %d C\n",
+               speed,
+               rpm,
+               temperature);
+
+        usleep(100000);
     }
 
-    printf("CAN frame transmitted successfully\n");
-    printf("CAN ID : 0x%03X\n", frame.can_id);
-    printf("DLC    : %d\n", frame.can_dlc);
-    printf("Data   : ");
-
-    for (int i = 0; i < frame.can_dlc; i++) {
-        printf("%02X ", frame.data[i]);
-    }
-
-    printf("\n");
-
-    /* 7. Close the socket */
     close(socket_fd);
 
     return 0;
