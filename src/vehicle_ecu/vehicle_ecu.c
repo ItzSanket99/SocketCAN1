@@ -62,7 +62,20 @@ int main() {
     int speed = 60;
     int rpm = 2500;
     int temperature = 85;
+	int delay_ms = 100;
 
+	char *env_rate = getenv("CAN_RATE_MS");
+
+	if (env_rate != NULL) {
+    		delay_ms = atoi(env_rate);
+	}
+
+	if (delay_ms <= 0) {
+    		delay_ms = 100;
+	}
+
+	printf("Transmission period: %d ms\n", delay_ms);
+	
     while (1) {
 
         /*
@@ -157,7 +170,9 @@ int main() {
                rpm,
                temperature);
 
-        usleep(100000);
+       
+
+	usleep(delay_ms * 1000);
     }
 
     close(socket_fd);

@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+
 #include <net/if.h>
 
 #include <linux/can.h>
@@ -12,7 +14,43 @@
 #include "../../include/can_messages.h"
 
 
-int main() {
+int main(int argc, char *argv[]) {
+
+    /* -------------------------------------------------
+       Determine filtering mode
+       ------------------------------------------------- */
+
+    int filter_mode = 0;
+    /*
+        0 = receive all
+        1 = speed only
+        2 = rpm only
+    */
+
+    if (argc > 1) {
+
+        if (strcmp(argv[1], "speed") == 0) {
+            filter_mode = 1;
+        }
+        else if (strcmp(argv[1], "rpm") == 0) {
+            filter_mode = 2;
+        }
+        else if (strcmp(argv[1], "all") == 0) {
+            filter_mode = 0;
+        }
+        else {
+            printf("Usage:\n");
+            printf("  ./dashboard_ecu all\n");
+            printf("  ./dashboard_ecu speed\n");
+            printf("  ./dashboard_ecu rpm\n");
+            return 1;
+        }
+    }
+
+
+    /* -------------------------------------------------
+       Create CAN socket
+       ------------------------------------------------- */
 
     int socket_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
 
@@ -20,6 +58,11 @@ int main() {
         perror("Socket creation failed");
         return 1;
     }
+
+
+    /* -------------------------------------------------
+       Configure CAN interface
+       ------------------------------------------------- */
 
     struct ifreq ifr;
 
@@ -31,12 +74,72 @@ int main() {
         return 1;
     }
 
+
     struct sockaddr_can addr;
 
     memset(&addr, 0, sizeof(addr));
 
     addr.can_family = AF_CAN;
     addr.can_ifindex = ifr.ifr_ifindex;
+
+
+    /* -------------------------------------------------
+       Apply CAN filter
+       ------------------------------------------------- */
+
+    if (filter_mode == 1) {
+
+        struct can_filter filter;
+
+        filter.can_id = CAN_ID_SPEED;
+        filter.can_mask = CAN_SFF_MASK;
+
+        if (setsockopt(socket_fd,
+                       SOL_CAN_RAW,
+                       CAN_RAW_FILTER,
+                       &filter,
+                       sizeof(filter)) < 0) {
+
+            perror("Speed filter failed");
+            close(socket_fd);
+            return 1;
+        }
+
+        printf("Dashboard filter: SPEED only\n");
+    }
+
+
+    else if (filter_mode == 2) {
+
+        struct can_filter filter;
+
+        filter.can_id = CAN_ID_RPM;
+        filter.can_mask = CAN_SFF_MASK;
+
+        if (setsockopt(socket_fd,
+                       SOL_CAN_RAW,
+                       CAN_RAW_FILTER,
+                       &filter,
+                       sizeof(filter)) < 0) {
+
+            perror("RPM filter failed");
+            close(socket_fd);
+            return 1;
+        }
+
+        printf("Dashboard filter: RPM only\n");
+    }
+
+
+    else {
+
+        printf("Dashboard filter: ALL messages\n");
+    }
+
+
+    /* -------------------------------------------------
+       Bind socket
+       ------------------------------------------------- */
 
     if (bind(socket_fd,
              (struct sockaddr *)&addr,
@@ -48,22 +151,21 @@ int main() {
     }
 
 
-    int speed = 0;
-    int rpm = 0;
-    int temperature = 0;
+    printf("Dashboard ECU started...\n\n");
 
-    printf("\n");
-    printf("--------------------------------\n");
-    printf("        Vehicle Dashboard\n");
-    printf("--------------------------------\n");
 
+    /* -------------------------------------------------
+       Receive frames
+       ------------------------------------------------- */
 
     while (1) {
 
         struct can_frame frame;
 
         int bytes_received =
-            read(socket_fd, &frame, sizeof(frame));
+            read(socket_fd,
+                 &frame,
+                 sizeof(frame));
 
         if (bytes_received < 0) {
             perror("CAN reception failed");
@@ -71,62 +173,16 @@ int main() {
         }
 
 
-        switch (frame.can_id) {
-
-            case CAN_ID_SPEED:
-
-                if (frame.can_dlc >= 2) {
-
-                    int encoded_speed =
-                        ((frame.data[0] << 8) |
-                         frame.data[1]);
-
-                    speed = encoded_speed / 10;
-                }
-
-                break;
+        printf("Received: ID=0x%03X DLC=%d Data=",
+               frame.can_id,
+               frame.can_dlc);
 
 
-            case CAN_ID_RPM:
-
-                if (frame.can_dlc >= 2) {
-
-                    rpm =
-                        ((frame.data[0] << 8) |
-                         frame.data[1]);
-                }
-
-                break;
-
-
-            case CAN_ID_TEMPERATURE:
-
-                if (frame.can_dlc >= 1) {
-
-                    temperature = frame.data[0];
-                }
-
-                break;
-
-
-            default:
-
-                printf("Unknown CAN ID: 0x%03X\n",
-                       frame.can_id);
-
-                continue;
+        for (int i = 0; i < frame.can_dlc; i++) {
+            printf("%02X ", frame.data[i]);
         }
 
-
-        printf("\033[4A");
-
-        printf("--------------------------------\n");
-        printf("        Vehicle Dashboard\n");
-        printf("--------------------------------\n");
-        printf("Speed       : %d km/h\n", speed);
-        printf("Engine RPM  : %d rpm\n", rpm);
-        printf("Temperature : %d C\n", temperature);
-        printf("--------------------------------\n");
+        printf("\n");
     }
 
 
